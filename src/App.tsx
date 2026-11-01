@@ -26,6 +26,8 @@ import { PinEditorPanel } from './components/PinEditorPanel';
 import { MarkerEditorPanel } from './components/MarkerEditorPanel';
 import { PanoramaPanel } from './components/PanoramaPanel';
 import { SettingsModal } from './components/SettingsModal';
+import { CitySelectModal } from './components/CitySelectModal';
+import { SMOLENSK_DEMO_PRESET } from './defaultData';
 
 const STORAGE_KEY = 'maphelper_data_v1';
 
@@ -43,8 +45,10 @@ export const App: React.FC = () => {
   const [activeTool, setActiveTool] = useState<ActiveTool>('select');
   const [baseMap, setBaseMap] = useState<BaseMapType>('scheme');
   const [studyMode, setStudyMode] = useState<boolean>(false);
-  const [mapCenter, setMapCenter] = useState<LatLngPoint>(DEFAULT_CENTER);
+  const [mapCenter, setMapCenter] = useState<LatLngPoint>(() => data.initialCenter || DEFAULT_CENTER);
   const [mapZoom, setMapZoom] = useState<number>(DEFAULT_ZOOM);
+  const [isCityModalOpen, setIsCityModalOpen] = useState<boolean>(false);
+  const [osmTrigger, setOsmTrigger] = useState<number>(0);
 
   // Layer Visibility
   const [layerVisibility, setLayerVisibility] = useState<LayerVisibility>({
@@ -468,15 +472,53 @@ export const App: React.FC = () => {
     input.click();
   };
 
-  // Reset Data to Default Smolensk
+  // Reset / Clear Map Data (preserving current city and API key)
   const handleResetData = () => {
-    setData(INITIAL_DATA);
-    setMapCenter(DEFAULT_CENTER);
-    setMapZoom(DEFAULT_ZOOM);
+    setData((prev) => ({
+      ...INITIAL_DATA,
+      cityName: prev.cityName || INITIAL_DATA.cityName,
+      initialCenter: prev.initialCenter || INITIAL_DATA.initialCenter,
+      yandexApiKey: prev.yandexApiKey,
+    }));
     setSelectedStripId(null);
     setSelectedSectionIndex(null);
     setSelectedTurnId(null);
+    setSelectedMarkerId(null);
     setSelectedPinId(null);
+  };
+
+  const handleLoadSmolenskDemo = () => {
+    setData((prev) => ({
+      ...prev,
+      cityName: SMOLENSK_DEMO_PRESET.cityName,
+      initialCenter: SMOLENSK_DEMO_PRESET.center,
+      pins: [...SMOLENSK_DEMO_PRESET.pins],
+      bookmarks: [...SMOLENSK_DEMO_PRESET.bookmarks],
+    }));
+    setMapCenter(SMOLENSK_DEMO_PRESET.center);
+    setMapZoom(SMOLENSK_DEMO_PRESET.zoom);
+    setSelectedStripId(null);
+    setSelectedSectionIndex(null);
+    setSelectedTurnId(null);
+    setSelectedMarkerId(null);
+    setSelectedPinId(null);
+  };
+
+  const handleSelectCity = (name: string, center: LatLngPoint, zoom: number = 15) => {
+    setMapCenter(center);
+    setMapZoom(zoom);
+    setData((prev) => ({
+      ...prev,
+      cityName: name,
+      initialCenter: center,
+    }));
+  };
+
+  const handleAddMultiplePins = (newPins: ExamPin[]) => {
+    setData((prev) => ({
+      ...prev,
+      pins: [...prev.pins, ...newPins],
+    }));
   };
 
   // Selected Entities
@@ -488,12 +530,15 @@ export const App: React.FC = () => {
   return (
     <div className="app-container">
       <Toolbar
+        cityName={data.cityName}
+        onOpenCityModal={() => setIsCityModalOpen(true)}
         activeTool={activeTool}
         onSelectTool={(tool) => {
           setActiveTool(tool);
           setDrawingRoadPoints([]);
           setDrawingTurnPoints([]);
         }}
+        onImportOsmSigns={() => setOsmTrigger((t) => t + 1)}
         baseMap={baseMap}
         onSelectBaseMap={setBaseMap}
         studyMode={studyMode}
@@ -632,6 +677,8 @@ export const App: React.FC = () => {
           onMoveMarkerStroke={handleMoveMarkerStroke}
           onUpdateMarkerPoint={handleUpdateMarkerPoint}
           onDeselectAll={handleCloseSidebar}
+          onAddMultiplePins={handleAddMultiplePins}
+          osmTrigger={osmTrigger}
         />
 
         {/* Right Editor Sidebar */}
@@ -744,7 +791,16 @@ export const App: React.FC = () => {
             setData((prev) => ({ ...prev, yandexApiKey: key }))
           }
           onResetData={handleResetData}
+          onLoadSmolenskDemo={handleLoadSmolenskDemo}
           onClose={() => setIsSettingsOpen(false)}
+        />
+      )}
+
+      {isCityModalOpen && (
+        <CitySelectModal
+          currentCity={data.cityName}
+          onSelectCity={handleSelectCity}
+          onClose={() => setIsCityModalOpen(false)}
         />
       )}
     </div>

@@ -32,3 +32,6 @@ tsconfig.tsbuildinfo
 .env
 .env.*
 !.env.example
+
+# Scratch scripts
+scratch/

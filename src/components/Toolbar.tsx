@@ -16,8 +16,11 @@ import {
 import { ActiveTool, BaseMapType, MapBookmark } from '../types';
 
 interface ToolbarProps {
+  cityName?: string;
+  onOpenCityModal: () => void;
   activeTool: ActiveTool;
   onSelectTool: (tool: ActiveTool) => void;
+  onImportOsmSigns?: () => void;
   baseMap: BaseMapType;
   onSelectBaseMap: (base: BaseMapType) => void;
   studyMode: boolean;
@@ -31,8 +34,11 @@ interface ToolbarProps {
 }
 
 export const Toolbar: React.FC<ToolbarProps> = ({
+  cityName,
+  onOpenCityModal,
   activeTool,
   onSelectTool,
+  onImportOsmSigns,
   baseMap,
   onSelectBaseMap,
   studyMode,
@@ -49,7 +55,14 @@ export const Toolbar: React.FC<ToolbarProps> = ({
       <div className="toolbar-group">
         <div className="toolbar-brand">
           <span>MapHelper</span>
-          <span className="brand-badge">ГИБДД Смоленск</span>
+          <button
+            type="button"
+            onClick={onOpenCityModal}
+            className="brand-badge city-badge"
+            title="Нажмите, чтобы выбрать или сменить город"
+          >
+            📍 {cityName || 'Выбрать город'}
+          </button>
         </div>
 
         <div className="toolbar-divider" />
@@ -99,6 +112,17 @@ export const Toolbar: React.FC<ToolbarProps> = ({
           <MapPin size={16} />
           <span>+ Метка</span>
         </button>
+
+        {onImportOsmSigns && (
+          <button
+            onClick={onImportOsmSigns}
+            className="btn btn-tool"
+            title="Автоматически загрузить дорожные знаки (уступи дорогу, стоп, светофоры, камеры) из OpenStreetMap в видимой области"
+          >
+            <Download size={15} />
+            <span>Знаки OSM</span>
+          </button>
+        )}
 
         <button
           onClick={() => onSelectTool('panorama')}

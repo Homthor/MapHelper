@@ -1,16 +1,35 @@
 import { LatLngPoint, MapHelperData } from './types';
 
+// Нейтральный центр по умолчанию (Москва), если пользователь ещё не указал свой город
 export const DEFAULT_CENTER: LatLngPoint = {
-  lat: 54.75354,
-  lng: 32.07765,
+  lat: 55.7558,
+  lng: 37.6176,
 };
 
-export const DEFAULT_ZOOM = 18;
+export const DEFAULT_ZOOM = 15;
 
 export const INITIAL_DATA: MapHelperData = {
   version: 1,
+  cityName: 'Москва',
+  initialCenter: DEFAULT_CENTER,
   roadStrips: [],
   turnTrajectories: [],
+  pins: [],
+  bookmarks: [],
+  yandexApiKey: '',
+};
+
+// Демонстрационный пресет маршрутов ГИБДД Смоленска (посёлок Тихвинка) для примеров
+export const SMOLENSK_DEMO_PRESET: {
+  cityName: string;
+  center: LatLngPoint;
+  zoom: number;
+  pins: MapHelperData['pins'];
+  bookmarks: MapHelperData['bookmarks'];
+} = {
+  cityName: 'Смоленск',
+  center: { lat: 54.75354, lng: 32.07765 },
+  zoom: 18,
   pins: [
     {
       id: 'pin-gibdd-smolensk',
@@ -41,5 +60,4 @@ export const INITIAL_DATA: MapHelperData = {
       zoom: 18,
     },
   ],
-  yandexApiKey: '',
 };

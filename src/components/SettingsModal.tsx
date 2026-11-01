@@ -5,6 +5,7 @@ interface SettingsModalProps {
   apiKey: string;
   onSaveApiKey: (key: string) => void;
   onResetData: () => void;
+  onLoadSmolenskDemo?: () => void;
   onClose: () => void;
 }
 
@@ -12,6 +13,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
   apiKey,
   onSaveApiKey,
   onResetData,
+  onLoadSmolenskDemo,
   onClose,
 }) => {
   const [tempKey, setTempKey] = useState(apiKey || '');
@@ -98,24 +100,41 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
           </div>
 
           <div style={{ borderTop: '1px solid var(--border-color)', paddingTop: 14 }}>
-            <strong>Сброс данных</strong>
-            <p style={{ marginBottom: 8 }}>
-              Если вы хотите удалить все нарисованные полосы и вернуть начальную карту
-              Смоленска (посёлок Тихвинка, 25А):
+            <strong>Управление данными карты</strong>
+            <p style={{ marginTop: 4, marginBottom: 10, fontSize: 13, color: 'var(--text-muted)' }}>
+              Вы можете полностью очистить нарисованные элементы карты или загрузить готовый демо-маршрут для ознакомления.
             </p>
-            <button
-              onClick={() => {
-                if (window.confirm('Сбросить все добавленные элементы к исходным данным?')) {
-                  onResetData();
-                  onClose();
-                }
-              }}
-              className="btn btn-secondary btn-sm"
-              style={{ color: 'var(--color-avoid)' }}
-            >
-              <RotateCcw size={14} />
-              <span>Сбросить к исходному состоянию (Тихвинка, 25А)</span>
-            </button>
+            <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap' }}>
+              <button
+                onClick={() => {
+                  if (window.confirm('Очистить все добавленные дороги, развороты, маркеры и метки?')) {
+                    onResetData();
+                    onClose();
+                  }
+                }}
+                className="btn btn-secondary btn-sm"
+                style={{ color: 'var(--color-avoid)' }}
+                title="Очистить все объекты, оставив город и ключ"
+              >
+                <RotateCcw size={14} />
+                <span>Очистить все объекты на карте</span>
+              </button>
+
+              {onLoadSmolenskDemo && (
+                <button
+                  onClick={() => {
+                    if (window.confirm('Загрузить готовый пример экзаменационного маршрута Смоленска (Тихвинка)? Текущие несохранённые объекты будут заменены.')) {
+                      onLoadSmolenskDemo();
+                      onClose();
+                    }
+                  }}
+                  className="btn btn-secondary btn-sm"
+                  title="Загрузить пример разметки и разворотов (МРЭО ГИБДД Смоленск)"
+                >
+                  <span>📋 Загрузить демо-маршрут (Смоленск)</span>
+                </button>
+              )}
+            </div>
           </div>
         </div>
 

@@ -111,6 +111,8 @@ export type ActiveTool =
 
 export interface MapHelperData {
   version: number;
+  cityName?: string;
+  initialCenter?: LatLngPoint;
   roadStrips: RoadStrip[];
   turnTrajectories: TurnTrajectory[];
   markerStrokes?: MarkerStroke[];

@@ -18,6 +18,7 @@ import {
   sampleQuadraticBezier,
 } from '../geometry';
 import { MARKER_COLOR_PALETTE } from './MarkerEditorPanel';
+import { fetchOsmTrafficSigns } from '../services/osmSignsService';
 
 // Fix Leaflet 1.9.4 Draggable bug where getSizedParentNode crashes with "Cannot read properties of null (reading 'offsetWidth')"
 // and ensure Draggable._dragging is never left stuck on error, outside clicks, or unmounts.
@@ -223,6 +224,8 @@ interface MapViewProps {
   onMoveMarkerStroke: (markerId: string, dLat: number, dLng: number) => void;
   onUpdateMarkerPoint: (markerId: string, pointIndex: number, newPt: LatLngPoint) => void;
   onDeselectAll?: () => void;
+  onAddMultiplePins?: (pins: ExamPin[]) => void;
+  osmTrigger?: number;
 }
 
 const PIN_ICONS: Record<string, string> = {
@@ -327,6 +330,8 @@ export const MapView: React.FC<MapViewProps> = ({
   onMoveMarkerStroke,
   onUpdateMarkerPoint,
   onDeselectAll,
+  onAddMultiplePins,
+  osmTrigger,
 }) => {
   const mapContainerRef = useRef<HTMLDivElement>(null);
   const ymaps3ContainerRef = useRef<HTMLDivElement>(null);
@@ -336,6 +341,9 @@ export const MapView: React.FC<MapViewProps> = ({
   const baseLayersRef = useRef<{ [key: string]: L.LayerGroup }>({});
   const drawingLayerRef = useRef<L.LayerGroup | null>(null);
   const featuresLayerRef = useRef<L.LayerGroup | null>(null);
+  const [currentZoom, setCurrentZoom] = useState<number>(zoom);
+  const [isImportingOsm, setIsImportingOsm] = useState<boolean>(false);
+  const [osmImportMessage, setOsmImportMessage] = useState<string | null>(null);
   const [v3Status, setV3Status] = useState<'none' | 'loading' | 'ready' | 'error'>('none');
   const [v3ErrorDetails, setV3ErrorDetails] = useState<string>('');
   const [retryTrigger, setRetryTrigger] = useState<number>(0);
@@ -360,6 +368,48 @@ export const MapView: React.FC<MapViewProps> = ({
     ];
     return rules.length > 0 ? rules : undefined;
   };
+
+  const handleImportOsmSigns = async () => {
+    const map = mapInstanceRef.current;
+    if (!map) return;
+    const b = map.getBounds();
+    setIsImportingOsm(true);
+    setOsmImportMessage(null);
+    try {
+      const { newPins, totalFetched } = await fetchOsmTrafficSigns(
+        {
+          south: b.getSouth(),
+          west: b.getWest(),
+          north: b.getNorth(),
+          east: b.getEast(),
+        },
+        pins
+      );
+      if (newPins.length > 0) {
+        if (onAddMultiplePins) {
+          onAddMultiplePins(newPins);
+        } else {
+          newPins.forEach((p) => onAddPinAt(p.position));
+        }
+        setOsmImportMessage(`✅ Добавлено знаков из OpenStreetMap: ${newPins.length}`);
+      } else if (totalFetched > 0) {
+        setOsmImportMessage(`ℹ️ Все найденные знаки (${totalFetched}) уже на карте.`);
+      } else {
+        setOsmImportMessage('ℹ️ В этой области не найдено знаков. Попробуйте приблизить перекрёсток.');
+      }
+    } catch (err: any) {
+      setOsmImportMessage(`⚠️ ${err?.message || 'Не удалось загрузить знаки'}`);
+    } finally {
+      setIsImportingOsm(false);
+      setTimeout(() => setOsmImportMessage(null), 6000);
+    }
+  };
+
+  useEffect(() => {
+    if (osmTrigger && osmTrigger > 0) {
+      handleImportOsmSigns();
+    }
+  }, [osmTrigger]);
 
   // Initialize Map
   useEffect(() => {
@@ -449,6 +499,12 @@ export const MapView: React.FC<MapViewProps> = ({
       }
     };
 
+    const handleZoomEnd = () => {
+      if (mapInstanceRef.current) {
+        setCurrentZoom(mapInstanceRef.current.getZoom());
+      }
+    };
+    map.on('zoomend', handleZoomEnd);
     map.on('move zoom moveend zoomend viewreset resize', syncYMap);
 
     const resizeObserver = new ResizeObserver(() => {
@@ -459,6 +515,7 @@ export const MapView: React.FC<MapViewProps> = ({
 
     return () => {
       resizeObserver.disconnect();
+      map.off('zoomend', handleZoomEnd);
       map.off('move zoom moveend zoomend viewreset resize', syncYMap);
       map.remove();
       if (mapContainerRef.current) {
@@ -594,6 +651,7 @@ export const MapView: React.FC<MapViewProps> = ({
     const dLng = Math.abs(curCenter.lng - center.lng);
     if (dLat > 0.0001 || dLng > 0.0001 || map.getZoom() !== zoom) {
       map.setView([center.lat, center.lng], zoom, { animate: true });
+      setCurrentZoom(zoom);
     }
   }, [center.lat, center.lng, zoom]);
 
@@ -1007,9 +1065,12 @@ export const MapView: React.FC<MapViewProps> = ({
             ? '#f59e0b'
             : '#ef4444';
 
+        const turnZoomFactor = Math.max(0.35, Math.min(2.5, Math.pow(1.35, currentZoom - 18)));
+        const effectiveTurnWeight = Math.max(2, Math.min(30, Math.round((isSelected ? 6 : 4) * scale * turnZoomFactor)));
+
         const polyline = L.polyline(curveCoords, {
           color,
-          weight: Math.round((isSelected ? 6 : 4) * scale),
+          weight: effectiveTurnWeight,
           opacity: 0.9,
           dashArray: turn.kind === 'uturn' ? '8, 6' : undefined,
         });
@@ -1031,7 +1092,7 @@ export const MapView: React.FC<MapViewProps> = ({
           const headPts = computeArrowHead(
             pts[pts.length - 2],
             pts[pts.length - 1],
-            2.8 * scale
+            2.8 * scale * turnZoomFactor
           );
           L.polygon(
             headPts.map((p) => [p.lat, p.lng] as [number, number]),
@@ -1126,9 +1187,13 @@ export const MapView: React.FC<MapViewProps> = ({
         const latlngs = stroke.points.map((p) => [p.lat, p.lng] as [number, number]);
         if (latlngs.length < 2) return;
 
+        // Scale stroke geographically with map zoom level (doubles every zoom level, matching road lanes)
+        const zoomWidthFactor = Math.pow(2, currentZoom - 18);
+        const effectiveWeight = Math.max(2, Math.min(120, Math.round(stroke.width * (isSelected ? 1.25 : 1) * zoomWidthFactor)));
+
         const polyline = L.polyline(latlngs, {
           color: stroke.color,
-          weight: stroke.width * (isSelected ? 1.25 : 1),
+          weight: effectiveWeight,
           opacity: stroke.opacity,
           dashArray: stroke.dashed ? '8, 8' : undefined,
           lineCap: 'round',
@@ -1149,11 +1214,12 @@ export const MapView: React.FC<MapViewProps> = ({
 
         polyline.addTo(layer);
 
-        // Arrow head if configured
+        // Arrow head if configured (scaled with zoom)
         if (stroke.arrowEnd && stroke.points.length >= 2) {
           const pPrev = stroke.points[stroke.points.length - 2];
           const pLast = stroke.points[stroke.points.length - 1];
-          const headPts = computeArrowHead(pPrev, pLast, Math.max(3, stroke.width * 0.4));
+          const arrowMeters = Math.max(1.5, Math.min(60, stroke.width * 0.4 * zoomWidthFactor));
+          const headPts = computeArrowHead(pPrev, pLast, arrowMeters);
           L.polygon(
             headPts.map((p) => [p.lat, p.lng] as [number, number]),
             {
@@ -1232,16 +1298,20 @@ export const MapView: React.FC<MapViewProps> = ({
       if (!isVisible) return;
 
       const isSelected = pin.id === selectedPinId;
-      const scale = (pin.scale ?? 1) * (isSelected ? 1.25 : 1);
+      // Proportional zoom factor: smoothly scales badges down when zooming out and up when zooming in
+      const zoomFactor = Math.max(0.35, Math.min(1.4, Math.pow(1.3, currentZoom - 18)));
+      const scale = (pin.scale ?? 1) * (isSelected ? 1.25 : 1) * zoomFactor;
       const emoji = PIN_ICONS[pin.category] || '📍';
+      const basePx = Math.max(14, Math.round(32 * zoomFactor));
+      const anchorPx = Math.round(basePx / 2);
 
       const customIcon = L.divIcon({
         className: 'custom-exam-pin',
         html: `<div class="pin-badge pin-${pin.category}" style="transform: scale(${scale}); ${
           isSelected ? 'box-shadow: 0 0 16px #38bdf8;' : ''
         }">${emoji}</div>`,
-        iconSize: [32, 32],
-        iconAnchor: [16, 16],
+        iconSize: [basePx, basePx],
+        iconAnchor: [anchorPx, anchorPx],
       });
 
       const marker = L.marker([pin.position.lat, pin.position.lng], {
@@ -1289,6 +1359,7 @@ export const MapView: React.FC<MapViewProps> = ({
     onUpdatePinPosition,
     onMoveMarkerStroke,
     onUpdateMarkerPoint,
+    currentZoom,
   ]);
 
   return (
@@ -1585,8 +1656,23 @@ export const MapView: React.FC<MapViewProps> = ({
       )}
 
       {activeTool === 'add_pin' && (
-        <div className="drawing-banner" style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+        <div className="drawing-banner" style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
           <span>Кликните на карту, чтобы установить экзаменационную метку</span>
+          <button
+            type="button"
+            onClick={handleImportOsmSigns}
+            disabled={isImportingOsm}
+            className="btn btn-primary btn-sm"
+            style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}
+            title="Автоматически найти и расставить дорожные знаки (уступи дорогу, стоп, светофоры, камеры) в видимой области через OpenStreetMap"
+          >
+            {isImportingOsm ? '⏳ Поиск в OpenStreetMap...' : '📥 Загрузить знаки из OpenStreetMap'}
+          </button>
+          {osmImportMessage && (
+            <span style={{ fontSize: 12, color: '#6ee7b7', fontWeight: 500 }}>
+              {osmImportMessage}
+            </span>
+          )}
           <button
             onClick={onCancelDrawing}
             className="btn btn-secondary btn-sm"

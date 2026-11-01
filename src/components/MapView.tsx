@@ -9,6 +9,7 @@ import {
   LayerVisibility,
   MarkerStroke,
   RoadStrip,
+  SelectedGroup,
   TurnTrajectory,
 } from '../types';
 import {
@@ -227,6 +228,11 @@ interface MapViewProps {
   onAddMultiplePins?: (pins: ExamPin[]) => void;
   osmTrigger?: number;
   onOsmLoadingChange?: (loading: boolean) => void;
+  selectedGroup?: SelectedGroup;
+  onSelectGroup?: (group: SelectedGroup) => void;
+  onClearGroupSelection?: () => void;
+  onMoveGroup?: (dLat: number, dLng: number) => void;
+  onDeleteGroup?: () => void;
 }
 
 const PIN_ICONS: Record<string, string> = {
@@ -334,6 +340,11 @@ export const MapView: React.FC<MapViewProps> = ({
   onAddMultiplePins,
   osmTrigger,
   onOsmLoadingChange,
+  selectedGroup = { pinIds: [], markerIds: [], turnIds: [], stripIds: [] },
+  onSelectGroup,
+  onClearGroupSelection,
+  onMoveGroup,
+  onDeleteGroup,
 }) => {
   const mapContainerRef = useRef<HTMLDivElement>(null);
   const ymaps3ContainerRef = useRef<HTMLDivElement>(null);
@@ -365,6 +376,17 @@ export const MapView: React.FC<MapViewProps> = ({
   const [drawingMarkerPoints, setDrawingMarkerPoints] = useState<LatLngPoint[]>([]);
   const isPaintingMarkerRef = useRef<boolean>(false);
   const paintedPointsRef = useRef<LatLngPoint[]>([]);
+
+  // Box Selection refs
+  const isBoxSelectingRef = useRef<boolean>(false);
+  const boxStartPtRef = useRef<L.LatLng | null>(null);
+  const boxRectRef = useRef<L.Rectangle | null>(null);
+
+  const totalGroupSelected =
+    (selectedGroup.pinIds?.length || 0) +
+    (selectedGroup.markerIds?.length || 0) +
+    (selectedGroup.turnIds?.length || 0) +
+    (selectedGroup.stripIds?.length || 0);
 
   const getActiveCustomization = (cleanPoi: boolean, contrast: boolean) => {
     const rules = [
@@ -760,8 +782,65 @@ export const MapView: React.FC<MapViewProps> = ({
         onAddPinAt(pt);
       } else if (activeTool === 'panorama') {
         onOpenPanoramaAt(pt);
-      } else if (activeTool === 'select') {
+      } else if (activeTool === 'select' || activeTool === 'box_select') {
+        onClearGroupSelection?.();
         onDeselectAll?.();
+      }
+    };
+
+    const container = map.getContainer();
+
+    const handleDomMouseDown = (e: MouseEvent) => {
+      const target = e.target as HTMLElement;
+      if (
+        target &&
+        (target.closest('.leaflet-control') ||
+          target.closest('.drawing-banner') ||
+          target.closest('.custom-turn-handle') ||
+          target.closest('.custom-vertex-handle') ||
+          target.closest('.custom-move-handle') ||
+          target.closest('.custom-marker-handle'))
+      ) {
+        return;
+      }
+
+      if (activeTool === 'box_select' || (activeTool === 'select' && e.shiftKey)) {
+        map.dragging.disable();
+        isBoxSelectingRef.current = true;
+        let latlng: L.LatLng;
+        try {
+          latlng = map.mouseEventToLatLng(e);
+        } catch {
+          return;
+        }
+        boxStartPtRef.current = latlng;
+        if (boxRectRef.current && drawingLayerRef.current?.hasLayer(boxRectRef.current)) {
+          drawingLayerRef.current.removeLayer(boxRectRef.current);
+        }
+        const rect = L.rectangle(L.latLngBounds(latlng, latlng), {
+          color: '#38bdf8',
+          weight: 2,
+          dashArray: '5, 5',
+          fillColor: '#0284c7',
+          fillOpacity: 0.18,
+        });
+        boxRectRef.current = rect;
+        if (drawingLayerRef.current) {
+          rect.addTo(drawingLayerRef.current);
+        }
+        e.preventDefault();
+        return;
+      }
+    };
+
+    const handleGlobalMouseMove = (e: MouseEvent) => {
+      if (isBoxSelectingRef.current && boxStartPtRef.current && boxRectRef.current) {
+        try {
+          const latlng = map.mouseEventToLatLng(e);
+          const bounds = L.latLngBounds(boxStartPtRef.current, latlng);
+          boxRectRef.current.setBounds(bounds);
+        } catch {}
+        return;
       }
     };
 
@@ -788,7 +867,78 @@ export const MapView: React.FC<MapViewProps> = ({
       }
     };
 
-    const handleGlobalMouseUp = () => {
+    const handleGlobalMouseUp = (e: MouseEvent) => {
+      if (isBoxSelectingRef.current && boxStartPtRef.current) {
+        isBoxSelectingRef.current = false;
+        map.dragging.enable();
+
+        let endLatLng = boxStartPtRef.current;
+        try {
+          endLatLng = map.mouseEventToLatLng(e);
+        } catch {
+          // fallback to last known
+        }
+
+        const bounds = L.latLngBounds(boxStartPtRef.current, endLatLng);
+
+        if (boxRectRef.current) {
+          if (drawingLayerRef.current?.hasLayer(boxRectRef.current)) {
+            drawingLayerRef.current.removeLayer(boxRectRef.current);
+          }
+          boxRectRef.current = null;
+        }
+
+        const p1 = map.latLngToContainerPoint(boxStartPtRef.current);
+        const p2 = map.latLngToContainerPoint(endLatLng);
+        const distPx = p1.distanceTo(p2);
+
+        if (distPx > 8 && onSelectGroup) {
+          const south = bounds.getSouth();
+          const north = bounds.getNorth();
+          const west = bounds.getWest();
+          const east = bounds.getEast();
+
+          const inBounds = (lat: number, lng: number) =>
+            lat >= south && lat <= north && lng >= west && lng <= east;
+
+          const matchingPins = pins
+            .filter((p) => inBounds(p.position.lat, p.position.lng))
+            .map((p) => p.id);
+
+          const matchingMarkers = (markerStrokes || [])
+            .filter((m) => m.points.some((pt) => inBounds(pt.lat, pt.lng)))
+            .map((m) => m.id);
+
+          const matchingTurns = turnTrajectories
+            .filter(
+              (t) =>
+                inBounds(t.start.lat, t.start.lng) ||
+                inBounds(t.control.lat, t.control.lng) ||
+                inBounds(t.end.lat, t.end.lng)
+            )
+            .map((t) => t.id);
+
+          const matchingStrips = roadStrips
+            .filter((s) => s.points.some((pt) => inBounds(pt.lat, pt.lng)))
+            .map((s) => s.id);
+
+          if (
+            matchingPins.length > 0 ||
+            matchingMarkers.length > 0 ||
+            matchingTurns.length > 0 ||
+            matchingStrips.length > 0
+          ) {
+            onSelectGroup({
+              pinIds: matchingPins,
+              markerIds: matchingMarkers,
+              turnIds: matchingTurns,
+              stripIds: matchingStrips,
+            });
+          }
+        }
+        boxStartPtRef.current = null;
+      }
+
       if (activeTool === 'draw_marker' && isPaintingMarkerRef.current) {
         isPaintingMarkerRef.current = false;
         map.dragging.enable();
@@ -808,12 +958,16 @@ export const MapView: React.FC<MapViewProps> = ({
       }
     };
 
+    container.addEventListener('mousedown', handleDomMouseDown);
+    window.addEventListener('mousemove', handleGlobalMouseMove);
     map.on('click', handleClick);
     map.on('mousedown', handleMouseDown);
     map.on('mousemove', handleMouseMove);
     window.addEventListener('mouseup', handleGlobalMouseUp);
 
     return () => {
+      container.removeEventListener('mousedown', handleDomMouseDown);
+      window.removeEventListener('mousemove', handleGlobalMouseMove);
       map.off('click', handleClick);
       map.off('mousedown', handleMouseDown);
       map.off('mousemove', handleMouseMove);
@@ -835,6 +989,12 @@ export const MapView: React.FC<MapViewProps> = ({
     onOpenPanoramaAt,
     onAddMarkerStroke,
     onDeselectAll,
+    pins,
+    markerStrokes,
+    turnTrajectories,
+    roadStrips,
+    onSelectGroup,
+    onClearGroupSelection,
   ]);
 
   // Render Drawing In-Progress Feedback
@@ -1034,27 +1194,30 @@ export const MapView: React.FC<MapViewProps> = ({
           }
         }
 
-        // Draggable vertex handles & center move handle when road is selected
-        if (strip.id === selectedStripId) {
-          strip.points.forEach((pt, ptIdx) => {
-            const vIcon = L.divIcon({
-              className: 'custom-vertex-handle',
-              html: `<div class="vertex-handle-dot" title="Вершина #${ptIdx + 1}. Перетащите для изменения формы"></div>`,
-              iconSize: [16, 16],
-              iconAnchor: [8, 8],
-            });
-            const vMarker = L.marker([pt.lat, pt.lng], {
-              icon: vIcon,
-              draggable: true,
-            });
+        // Draggable vertex handles & center move handle when road is selected (or in group)
+        const isStripGroupSelected = selectedGroup.stripIds.includes(strip.id);
+        if (strip.id === selectedStripId || isStripGroupSelected) {
+          if (strip.id === selectedStripId) {
+            strip.points.forEach((pt, ptIdx) => {
+              const vIcon = L.divIcon({
+                className: 'custom-vertex-handle',
+                html: `<div class="vertex-handle-dot" title="Вершина #${ptIdx + 1}. Перетащите для изменения формы"></div>`,
+                iconSize: [16, 16],
+                iconAnchor: [8, 8],
+              });
+              const vMarker = L.marker([pt.lat, pt.lng], {
+                icon: vIcon,
+                draggable: true,
+              });
 
-            vMarker.on('dragend', (e: any) => {
-              const p = e.target.getLatLng();
-              onUpdateRoadPoint(strip.id, ptIdx, { lat: p.lat, lng: p.lng });
-            });
+              vMarker.on('dragend', (e: any) => {
+                const p = e.target.getLatLng();
+                onUpdateRoadPoint(strip.id, ptIdx, { lat: p.lat, lng: p.lng });
+              });
 
-            vMarker.addTo(layer);
-          });
+              vMarker.addTo(layer);
+            });
+          }
 
           // Center move handle (✥)
           if (strip.points.length > 0) {
@@ -1062,7 +1225,9 @@ export const MapView: React.FC<MapViewProps> = ({
             const avgLng = strip.points.reduce((acc, p) => acc + p.lng, 0) / strip.points.length;
             const moveIcon = L.divIcon({
               className: 'custom-move-handle',
-              html: '<div class="move-handle-badge" title="Перетащите, чтобы сдвинуть дорогу целиком">✥</div>',
+              html: `<div class="move-handle-badge" style="${
+                isStripGroupSelected ? 'background: #0284c7; border-color: #38bdf8;' : ''
+              }" title="Перетащите, чтобы сдвинуть дорогу${isStripGroupSelected ? ' и всю группу' : ''}">✥</div>`,
               iconSize: [26, 26],
               iconAnchor: [13, 13],
             });
@@ -1075,7 +1240,11 @@ export const MapView: React.FC<MapViewProps> = ({
               const cur = e.target.getLatLng();
               const dLat = cur.lat - startLatLng.lat;
               const dLng = cur.lng - startLatLng.lng;
-              onMoveRoadStrip(strip.id, dLat, dLng);
+              if (isStripGroupSelected && onMoveGroup) {
+                onMoveGroup(dLat, dLng);
+              } else {
+                onMoveRoadStrip(strip.id, dLat, dLng);
+              }
             });
             moveMarker.addTo(layer);
           }
@@ -1138,7 +1307,9 @@ export const MapView: React.FC<MapViewProps> = ({
           ).addTo(layer);
         }
 
-        // Draggable handles for start, control, and end points when selected
+        const isTurnGroupSelected = selectedGroup.turnIds.includes(turn.id);
+
+        // Draggable handles for start, control, and end points when selected individually
         if (isSelected) {
           const createPointDragHandle = (
             pt: LatLngPoint,
@@ -1173,13 +1344,17 @@ export const MapView: React.FC<MapViewProps> = ({
           createPointDragHandle(turn.end, 'Конец манёвра', (newPt) =>
             onUpdateTurnPoints(turn.id, { end: newPt })
           );
+        }
 
-          // Center move handle (✥) for whole turn
+        // Center move handle (✥) for whole turn (when selected or group selected)
+        if (isSelected || isTurnGroupSelected) {
           const midLat = (turn.start.lat + turn.control.lat + turn.end.lat) / 3;
           const midLng = (turn.start.lng + turn.control.lng + turn.end.lng) / 3;
           const moveIcon = L.divIcon({
             className: 'custom-move-handle',
-            html: '<div class="move-handle-badge" title="Перетащите, чтобы сдвинуть манёвр целиком">✥</div>',
+            html: `<div class="move-handle-badge" style="${
+              isTurnGroupSelected ? 'background: #0284c7; border-color: #38bdf8;' : ''
+            }" title="Перетащите, чтобы сдвинуть манёвр${isTurnGroupSelected ? ' и всю группу' : ''}">✥</div>`,
             iconSize: [26, 26],
             iconAnchor: [13, 13],
           });
@@ -1192,7 +1367,11 @@ export const MapView: React.FC<MapViewProps> = ({
             const cur = e.target.getLatLng();
             const dLat = cur.lat - startLatLng.lat;
             const dLng = cur.lng - startLatLng.lng;
-            onMoveTurn(turn.id, dLat, dLng);
+            if (isTurnGroupSelected && onMoveGroup) {
+              onMoveGroup(dLat, dLng);
+            } else {
+              onMoveTurn(turn.id, dLat, dLng);
+            }
           });
           moveMarker.addTo(layer);
         } else {
@@ -1264,6 +1443,8 @@ export const MapView: React.FC<MapViewProps> = ({
           ).addTo(layer);
         }
 
+        const isMarkerGroupSelected = selectedGroup.markerIds.includes(stroke.id);
+
         // Handles for selected marker stroke
         if (isSelected) {
           // Draggable handles on start, middle, and end
@@ -1292,13 +1473,17 @@ export const MapView: React.FC<MapViewProps> = ({
 
             hMarker.addTo(layer);
           });
+        }
 
-          // Center move handle (✥)
+        // Center move handle (✥) for whole marker stroke
+        if (isSelected || isMarkerGroupSelected) {
           const avgLat = stroke.points.reduce((acc, p) => acc + p.lat, 0) / stroke.points.length;
           const avgLng = stroke.points.reduce((acc, p) => acc + p.lng, 0) / stroke.points.length;
           const moveIcon = L.divIcon({
             className: 'custom-move-handle',
-            html: '<div class="move-handle-badge" title="Перетащите, чтобы сдвинуть маркер целиком">✥</div>',
+            html: `<div class="move-handle-badge" style="${
+              isMarkerGroupSelected ? 'background: #0284c7; border-color: #38bdf8;' : ''
+            }" title="Перетащите, чтобы сдвинуть маркер${isMarkerGroupSelected ? ' и всю группу' : ''}">✥</div>`,
             iconSize: [26, 26],
             iconAnchor: [13, 13],
           });
@@ -1311,7 +1496,11 @@ export const MapView: React.FC<MapViewProps> = ({
             const cur = e.target.getLatLng();
             const dLat = cur.lat - startLatLng.lat;
             const dLng = cur.lng - startLatLng.lng;
-            onMoveMarkerStroke(stroke.id, dLat, dLng);
+            if (isMarkerGroupSelected && onMoveGroup) {
+              onMoveGroup(dLat, dLng);
+            } else {
+              onMoveMarkerStroke(stroke.id, dLat, dLng);
+            }
           });
           moveMarker.addTo(layer);
         }
@@ -1330,7 +1519,9 @@ export const MapView: React.FC<MapViewProps> = ({
 
       if (!isVisible) return;
 
-      const isSelected = pin.id === selectedPinId;
+      const isGroupSelected = selectedGroup.pinIds.includes(pin.id);
+      const isSingleSelected = pin.id === selectedPinId;
+      const isSelected = isGroupSelected || isSingleSelected;
       // Proportional zoom factor: smoothly scales badges down when zooming out and up when zooming in
       const zoomFactor = Math.max(0.35, Math.min(1.4, Math.pow(1.3, currentZoom - 18)));
       const scale = (pin.scale ?? 1) * (isSelected ? 1.25 : 1) * zoomFactor;
@@ -1341,7 +1532,11 @@ export const MapView: React.FC<MapViewProps> = ({
       const customIcon = L.divIcon({
         className: 'custom-exam-pin',
         html: `<div class="pin-badge pin-${pin.category}" style="transform: scale(${scale}); ${
-          isSelected ? 'box-shadow: 0 0 16px #38bdf8;' : ''
+          isGroupSelected
+            ? 'box-shadow: 0 0 0 3px #38bdf8, 0 0 16px rgba(56, 189, 248, 0.85); outline: 2px solid #fff;'
+            : isSingleSelected
+            ? 'box-shadow: 0 0 16px #38bdf8;'
+            : ''
         }">${emoji}</div>`,
         iconSize: [basePx, basePx],
         iconAnchor: [anchorPx, anchorPx],
@@ -1359,7 +1554,13 @@ export const MapView: React.FC<MapViewProps> = ({
 
       marker.on('dragend', (e: any) => {
         const pos = e.target.getLatLng();
-        onUpdatePinPosition(pin.id, { lat: pos.lat, lng: pos.lng });
+        if (isGroupSelected && onMoveGroup) {
+          const dLat = pos.lat - pin.position.lat;
+          const dLng = pos.lng - pin.position.lng;
+          onMoveGroup(dLat, dLng);
+        } else {
+          onUpdatePinPosition(pin.id, { lat: pos.lat, lng: pos.lng });
+        }
       });
 
       marker.bindTooltip(
@@ -1393,6 +1594,8 @@ export const MapView: React.FC<MapViewProps> = ({
     onMoveMarkerStroke,
     onUpdateMarkerPoint,
     currentZoom,
+    selectedGroup,
+    onMoveGroup,
   ]);
 
   return (
@@ -1530,6 +1733,71 @@ export const MapView: React.FC<MapViewProps> = ({
               )}
             </div>
           )}
+        </div>
+      )}
+
+      {/* Multi-Selection Group Banner */}
+      {totalGroupSelected > 0 && (
+        <div
+          className="drawing-banner"
+          style={{
+            top: 14,
+            zIndex: 1050,
+            background: 'rgba(15, 23, 42, 0.96)',
+            border: '1px solid #38bdf8',
+            boxShadow: '0 8px 30px rgba(0, 0, 0, 0.6)',
+            display: 'flex',
+            alignItems: 'center',
+            gap: 12,
+            flexWrap: 'wrap',
+          }}
+        >
+          <span>
+            📦 <b>Выбрано объектов: {totalGroupSelected}</b>
+            <span style={{ color: 'var(--text-muted)', marginLeft: 6, fontSize: 12 }}>
+              ({[
+                selectedGroup.pinIds?.length ? `${selectedGroup.pinIds.length} меток` : '',
+                selectedGroup.markerIds?.length ? `${selectedGroup.markerIds.length} линий` : '',
+                selectedGroup.turnIds?.length ? `${selectedGroup.turnIds.length} разворотов` : '',
+                selectedGroup.stripIds?.length ? `${selectedGroup.stripIds.length} дорог` : '',
+              ].filter(Boolean).join(', ')})
+            </span>
+          </span>
+          <button
+            type="button"
+            onClick={onDeleteGroup}
+            className="btn btn-danger btn-sm"
+            style={{ display: 'inline-flex', alignItems: 'center', gap: 5 }}
+            title="Удалить все выбранные объекты (Delete / Backspace)"
+          >
+            🗑️ Удалить все ({totalGroupSelected})
+          </button>
+          <button
+            type="button"
+            onClick={onClearGroupSelection}
+            className="btn btn-secondary btn-sm"
+            title="Снять выделение (Esc)"
+          >
+            ✕ Снять (Esc)
+          </button>
+          <span style={{ fontSize: 11, color: '#38bdf8' }}>
+            💡 Перетащите любой из них мышью, чтобы сдвинуть всю группу
+          </span>
+        </div>
+      )}
+
+      {/* Box Select Tool Guide Banner */}
+      {activeTool === 'box_select' && totalGroupSelected === 0 && (
+        <div className="drawing-banner" style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+          <span>
+            📦 <b>Выделение рамкой:</b> зажмите левую кнопку мыши и растяните прямоугольник вокруг объектов
+          </span>
+          <button
+            onClick={onCancelDrawing}
+            className="btn btn-secondary btn-sm"
+          >
+            Отмена (Esc)
+          </button>
         </div>
       )}
 

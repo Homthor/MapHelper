@@ -103,11 +103,19 @@ export type BaseMapType = 'scheme' | 'satellite' | 'hybrid';
 
 export type ActiveTool =
   | 'select'
+  | 'box_select'
   | 'draw_road'
   | 'draw_turn'
   | 'draw_marker'
   | 'add_pin'
   | 'panorama';
+
+export interface SelectedGroup {
+  pinIds: string[];
+  markerIds: string[];
+  turnIds: string[];
+  stripIds: string[];
+}
 
 export interface MapHelperData {
   version: number;

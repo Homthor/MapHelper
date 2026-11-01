@@ -10,6 +10,7 @@ import {
   MarkerStroke,
   RoadSection,
   RoadStrip,
+  SelectedGroup,
   TurnTrajectory,
 } from './types';
 import { DEFAULT_CENTER, DEFAULT_ZOOM, INITIAL_DATA } from './defaultData';
@@ -69,6 +70,12 @@ export const App: React.FC = () => {
   const [selectedTurnId, setSelectedTurnId] = useState<string | null>(null);
   const [selectedMarkerId, setSelectedMarkerId] = useState<string | null>(null);
   const [selectedPinId, setSelectedPinId] = useState<string | null>(null);
+  const [selectedGroup, setSelectedGroup] = useState<SelectedGroup>({
+    pinIds: [],
+    markerIds: [],
+    turnIds: [],
+    stripIds: [],
+  });
 
   // In-progress Drawing State
   const [drawingRoadPoints, setDrawingRoadPoints] = useState<LatLngPoint[]>([]);
@@ -90,18 +97,114 @@ export const App: React.FC = () => {
     }
   }, [data]);
 
-  // Keyboard shortcut Esc to reset active tool to select
+  // Multi-selection Handlers
+  const handleSelectGroup = (group: SelectedGroup) => {
+    setSelectedGroup(group);
+    setSelectedStripId(null);
+    setSelectedSectionIndex(null);
+    setSelectedTurnId(null);
+    setSelectedMarkerId(null);
+    setSelectedPinId(null);
+  };
+
+  const handleClearGroupSelection = () => {
+    setSelectedGroup({ pinIds: [], markerIds: [], turnIds: [], stripIds: [] });
+  };
+
+  const handleDeleteGroup = () => {
+    setData((prev) => ({
+      ...prev,
+      pins: prev.pins.filter((p) => !selectedGroup.pinIds.includes(p.id)),
+      markerStrokes: (prev.markerStrokes || []).filter(
+        (m) => !selectedGroup.markerIds.includes(m.id)
+      ),
+      turnTrajectories: prev.turnTrajectories.filter(
+        (t) => !selectedGroup.turnIds.includes(t.id)
+      ),
+      roadStrips: prev.roadStrips.filter(
+        (s) => !selectedGroup.stripIds.includes(s.id)
+      ),
+    }));
+    handleClearGroupSelection();
+  };
+
+  const handleMoveGroup = (dLat: number, dLng: number) => {
+    setData((prev) => ({
+      ...prev,
+      pins: prev.pins.map((p) =>
+        selectedGroup.pinIds.includes(p.id)
+          ? { ...p, position: { lat: p.position.lat + dLat, lng: p.position.lng + dLng } }
+          : p
+      ),
+      markerStrokes: (prev.markerStrokes || []).map((m) =>
+        selectedGroup.markerIds.includes(m.id)
+          ? {
+              ...m,
+              points: m.points.map((pt) => ({
+                lat: pt.lat + dLat,
+                lng: pt.lng + dLng,
+              })),
+            }
+          : m
+      ),
+      turnTrajectories: prev.turnTrajectories.map((t) =>
+        selectedGroup.turnIds.includes(t.id)
+          ? {
+              ...t,
+              start: { lat: t.start.lat + dLat, lng: t.start.lng + dLng },
+              control: { lat: t.control.lat + dLat, lng: t.control.lng + dLng },
+              end: { lat: t.end.lat + dLat, lng: t.end.lng + dLng },
+            }
+          : t
+      ),
+      roadStrips: prev.roadStrips.map((s) =>
+        selectedGroup.stripIds.includes(s.id)
+          ? {
+              ...s,
+              points: s.points.map((pt) => ({
+                lat: pt.lat + dLat,
+                lng: pt.lng + dLng,
+              })),
+            }
+          : s
+      ),
+    }));
+  };
+
+  // Keyboard shortcut Esc / Delete / Backspace
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') {
-        setActiveTool('select');
-        setDrawingRoadPoints([]);
-        setDrawingTurnPoints([]);
+      const target = e.target as HTMLElement;
+      if (
+        target &&
+        (target.tagName === 'INPUT' ||
+          target.tagName === 'TEXTAREA' ||
+          target.isContentEditable)
+      ) {
+        return;
+      }
+      const totalSelected =
+        selectedGroup.pinIds.length +
+        selectedGroup.markerIds.length +
+        selectedGroup.turnIds.length +
+        selectedGroup.stripIds.length;
+
+      if ((e.key === 'Delete' || e.key === 'Backspace') && totalSelected > 0) {
+        e.preventDefault();
+        handleDeleteGroup();
+      } else if (e.key === 'Escape') {
+        if (totalSelected > 0) {
+          handleClearGroupSelection();
+        } else {
+          setActiveTool('select');
+          setDrawingRoadPoints([]);
+          setDrawingTurnPoints([]);
+        }
       }
     };
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, []);
+  }, [selectedGroup]);
 
   // Selection Handlers
   const handleSelectSection = (stripId: string, sectionIndex: number) => {
@@ -110,6 +213,7 @@ export const App: React.FC = () => {
     setSelectedTurnId(null);
     setSelectedMarkerId(null);
     setSelectedPinId(null);
+    handleClearGroupSelection();
   };
 
   const handleSelectTurn = (turnId: string) => {
@@ -118,6 +222,7 @@ export const App: React.FC = () => {
     setSelectedSectionIndex(null);
     setSelectedMarkerId(null);
     setSelectedPinId(null);
+    handleClearGroupSelection();
   };
 
   const handleSelectMarker = (markerId: string) => {
@@ -126,6 +231,7 @@ export const App: React.FC = () => {
     setSelectedSectionIndex(null);
     setSelectedTurnId(null);
     setSelectedPinId(null);
+    handleClearGroupSelection();
   };
 
   const handleSelectPin = (pinId: string) => {
@@ -134,6 +240,7 @@ export const App: React.FC = () => {
     setSelectedSectionIndex(null);
     setSelectedTurnId(null);
     setSelectedMarkerId(null);
+    handleClearGroupSelection();
   };
 
   const handleCloseSidebar = () => {
@@ -142,6 +249,7 @@ export const App: React.FC = () => {
     setSelectedTurnId(null);
     setSelectedMarkerId(null);
     setSelectedPinId(null);
+    handleClearGroupSelection();
   };
 
   // Drawing Road Strip
@@ -682,6 +790,11 @@ export const App: React.FC = () => {
           onAddMultiplePins={handleAddMultiplePins}
           osmTrigger={osmTrigger}
           onOsmLoadingChange={setIsImportingOsm}
+          selectedGroup={selectedGroup}
+          onSelectGroup={handleSelectGroup}
+          onClearGroupSelection={handleClearGroupSelection}
+          onMoveGroup={handleMoveGroup}
+          onDeleteGroup={handleDeleteGroup}
         />
 
         {/* Right Editor Sidebar */}

@@ -1,5 +1,6 @@
 import React from 'react';
 import {
+  BoxSelect,
   Compass,
   Download,
   Eye,
@@ -77,6 +78,15 @@ export const Toolbar: React.FC<ToolbarProps> = ({
         >
           <MousePointer size={16} />
           <span>Выбор</span>
+        </button>
+
+        <button
+          onClick={() => onSelectTool('box_select')}
+          className={`btn btn-tool ${activeTool === 'box_select' ? 'active' : ''}`}
+          title="Выделение рамкой: обведите прямоугольную область на карте для группового перемещения или удаления (также работает зажатием Shift в режиме Выбор)"
+        >
+          <BoxSelect size={16} />
+          <span>Рамка</span>
         </button>
 
         <button

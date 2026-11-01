@@ -49,6 +49,7 @@ export const App: React.FC = () => {
   const [mapZoom, setMapZoom] = useState<number>(DEFAULT_ZOOM);
   const [isCityModalOpen, setIsCityModalOpen] = useState<boolean>(false);
   const [osmTrigger, setOsmTrigger] = useState<number>(0);
+  const [isImportingOsm, setIsImportingOsm] = useState<boolean>(false);
 
   // Layer Visibility
   const [layerVisibility, setLayerVisibility] = useState<LayerVisibility>({
@@ -539,6 +540,7 @@ export const App: React.FC = () => {
           setDrawingTurnPoints([]);
         }}
         onImportOsmSigns={() => setOsmTrigger((t) => t + 1)}
+        isImportingOsm={isImportingOsm}
         baseMap={baseMap}
         onSelectBaseMap={setBaseMap}
         studyMode={studyMode}
@@ -679,6 +681,7 @@ export const App: React.FC = () => {
           onDeselectAll={handleCloseSidebar}
           onAddMultiplePins={handleAddMultiplePins}
           osmTrigger={osmTrigger}
+          onOsmLoadingChange={setIsImportingOsm}
         />
 
         {/* Right Editor Sidebar */}

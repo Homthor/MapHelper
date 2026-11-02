@@ -19,7 +19,6 @@ import {
   sampleQuadraticBezier,
 } from '../geometry';
 import { MARKER_COLOR_PALETTE } from './MarkerEditorPanel';
-import { fetchOsmTrafficSigns } from '../services/osmSignsService';
 
 // Fix Leaflet 1.9.4 Draggable bug where getSizedParentNode crashes with "Cannot read properties of null (reading 'offsetWidth')"
 // and ensure Draggable._dragging is never left stuck on error, outside clicks, or unmounts.
@@ -225,9 +224,6 @@ interface MapViewProps {
   onMoveMarkerStroke: (markerId: string, dLat: number, dLng: number) => void;
   onUpdateMarkerPoint: (markerId: string, pointIndex: number, newPt: LatLngPoint) => void;
   onDeselectAll?: () => void;
-  onAddMultiplePins?: (pins: ExamPin[]) => void;
-  osmTrigger?: number;
-  onOsmLoadingChange?: (loading: boolean) => void;
   selectedGroup?: SelectedGroup;
   onSelectGroup?: (group: SelectedGroup) => void;
   onClearGroupSelection?: () => void;
@@ -337,9 +333,6 @@ export const MapView: React.FC<MapViewProps> = ({
   onMoveMarkerStroke,
   onUpdateMarkerPoint,
   onDeselectAll,
-  onAddMultiplePins,
-  osmTrigger,
-  onOsmLoadingChange,
   selectedGroup = { pinIds: [], markerIds: [], turnIds: [], stripIds: [] },
   onSelectGroup,
   onClearGroupSelection,
@@ -355,11 +348,6 @@ export const MapView: React.FC<MapViewProps> = ({
   const drawingLayerRef = useRef<L.LayerGroup | null>(null);
   const featuresLayerRef = useRef<L.LayerGroup | null>(null);
   const [currentZoom, setCurrentZoom] = useState<number>(zoom);
-  const [isImportingOsm, setIsImportingOsm] = useState<boolean>(false);
-  const [osmImportStatus, setOsmImportStatus] = useState<{
-    type: 'loading' | 'success' | 'info' | 'warning' | 'error';
-    message: string;
-  } | null>(null);
   const [v3Status, setV3Status] = useState<'none' | 'loading' | 'ready' | 'error'>('none');
   const [v3ErrorDetails, setV3ErrorDetails] = useState<string>('');
   const [retryTrigger, setRetryTrigger] = useState<number>(0);
@@ -395,76 +383,6 @@ export const MapView: React.FC<MapViewProps> = ({
     ];
     return rules.length > 0 ? rules : undefined;
   };
-
-  const handleImportOsmSigns = async () => {
-    const map = mapInstanceRef.current;
-    if (!map) return;
-
-    if (map.getZoom() < 14) {
-      setOsmImportStatus({
-        type: 'warning',
-        message: '⚠️ Слишком мелкий масштаб. Приблизьте нужный перекрёсток (зум 14+), чтобы загрузить знаки.',
-      });
-      setTimeout(() => setOsmImportStatus(null), 6000);
-      return;
-    }
-
-    const b = map.getBounds();
-    setIsImportingOsm(true);
-    onOsmLoadingChange?.(true);
-    setOsmImportStatus({
-      type: 'loading',
-      message: 'Запрос дорожных знаков из OpenStreetMap (в видимой области)...',
-    });
-
-    try {
-      const { newPins, totalFetched } = await fetchOsmTrafficSigns(
-        {
-          south: b.getSouth(),
-          west: b.getWest(),
-          north: b.getNorth(),
-          east: b.getEast(),
-        },
-        pins
-      );
-      if (newPins.length > 0) {
-        if (onAddMultiplePins) {
-          onAddMultiplePins(newPins);
-        } else {
-          newPins.forEach((p) => onAddPinAt(p.position));
-        }
-        setOsmImportStatus({
-          type: 'success',
-          message: `✅ Загружено знаков из OpenStreetMap: ${newPins.length} (уступи дорогу, стоп, светофоры, камеры)`,
-        });
-      } else if (totalFetched > 0) {
-        setOsmImportStatus({
-          type: 'info',
-          message: `ℹ️ Найдено знаков: ${totalFetched}. Все они уже добавлены на карту.`,
-        });
-      } else {
-        setOsmImportStatus({
-          type: 'info',
-          message: 'ℹ️ В видимой области знаков в OpenStreetMap не найдено. Попробуйте приблизить другой перекрёсток.',
-        });
-      }
-    } catch (err: any) {
-      setOsmImportStatus({
-        type: 'error',
-        message: `⚠️ Ошибка загрузки знаков: ${err?.message || 'Не удалось связаться с сервером OpenStreetMap'}`,
-      });
-    } finally {
-      setIsImportingOsm(false);
-      onOsmLoadingChange?.(false);
-      setTimeout(() => setOsmImportStatus(null), 7000);
-    }
-  };
-
-  useEffect(() => {
-    if (osmTrigger && osmTrigger > 0) {
-      handleImportOsmSigns();
-    }
-  }, [osmTrigger]);
 
   // Initialize Map
   useEffect(() => {
@@ -1801,54 +1719,6 @@ export const MapView: React.FC<MapViewProps> = ({
         </div>
       )}
 
-      {/* Global OSM Import Status Toast */}
-      {osmImportStatus && (
-        <div
-          className="drawing-banner"
-          style={{
-            top: activeTool !== 'select' ? 62 : 14,
-            zIndex: 1000,
-            background:
-              osmImportStatus.type === 'error'
-                ? 'rgba(127, 29, 29, 0.95)'
-                : osmImportStatus.type === 'warning'
-                ? 'rgba(120, 53, 15, 0.95)'
-                : osmImportStatus.type === 'success'
-                ? 'rgba(6, 78, 59, 0.95)'
-                : 'rgba(30, 41, 59, 0.95)',
-            borderColor:
-              osmImportStatus.type === 'error'
-                ? '#ef4444'
-                : osmImportStatus.type === 'warning'
-                ? '#f59e0b'
-                : osmImportStatus.type === 'success'
-                ? '#10b981'
-                : '#3b82f6',
-            boxShadow: '0 8px 24px rgba(0, 0, 0, 0.4)',
-            maxWidth: '90vw',
-          }}
-        >
-          {osmImportStatus.type === 'loading' && <span className="osm-spin">⏳</span>}
-          <span>{osmImportStatus.message}</span>
-          <button
-            onClick={() => setOsmImportStatus(null)}
-            style={{
-              background: 'none',
-              border: 'none',
-              color: 'rgba(255,255,255,0.7)',
-              cursor: 'pointer',
-              fontSize: '16px',
-              lineHeight: 1,
-              padding: '0 4px',
-              marginLeft: 6,
-            }}
-            title="Закрыть"
-          >
-            ×
-          </button>
-        </div>
-      )}
-
       {/* In-progress drawing banner */}
       {activeTool === 'draw_road' && (
         <div className="drawing-banner" style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
@@ -2005,18 +1875,8 @@ export const MapView: React.FC<MapViewProps> = ({
       )}
 
       {activeTool === 'add_pin' && (
-        <div className="drawing-banner" style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
+        <div className="drawing-banner" style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
           <span>Кликните на карту, чтобы установить экзаменационную метку</span>
-          <button
-            type="button"
-            onClick={handleImportOsmSigns}
-            disabled={isImportingOsm}
-            className="btn btn-primary btn-sm"
-            style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}
-            title="Автоматически найти и расставить дорожные знаки (уступи дорогу, стоп, светофоры, камеры) в видимой области через OpenStreetMap"
-          >
-            {isImportingOsm ? '⏳ Поиск в OpenStreetMap...' : '📥 Загрузить знаки из OpenStreetMap'}
-          </button>
           <button
             onClick={onCancelDrawing}
             className="btn btn-secondary btn-sm"

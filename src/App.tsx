@@ -49,8 +49,6 @@ export const App: React.FC = () => {
   const [mapCenter, setMapCenter] = useState<LatLngPoint>(() => data.initialCenter || DEFAULT_CENTER);
   const [mapZoom, setMapZoom] = useState<number>(DEFAULT_ZOOM);
   const [isCityModalOpen, setIsCityModalOpen] = useState<boolean>(false);
-  const [osmTrigger, setOsmTrigger] = useState<number>(0);
-  const [isImportingOsm, setIsImportingOsm] = useState<boolean>(false);
 
   // Layer Visibility
   const [layerVisibility, setLayerVisibility] = useState<LayerVisibility>({
@@ -623,13 +621,6 @@ export const App: React.FC = () => {
     }));
   };
 
-  const handleAddMultiplePins = (newPins: ExamPin[]) => {
-    setData((prev) => ({
-      ...prev,
-      pins: [...prev.pins, ...newPins],
-    }));
-  };
-
   // Selected Entities
   const currentStrip = data.roadStrips.find((s) => s.id === selectedStripId);
   const currentTurn = data.turnTrajectories.find((t) => t.id === selectedTurnId);
@@ -647,8 +638,6 @@ export const App: React.FC = () => {
           setDrawingRoadPoints([]);
           setDrawingTurnPoints([]);
         }}
-        onImportOsmSigns={() => setOsmTrigger((t) => t + 1)}
-        isImportingOsm={isImportingOsm}
         baseMap={baseMap}
         onSelectBaseMap={setBaseMap}
         studyMode={studyMode}
@@ -787,9 +776,6 @@ export const App: React.FC = () => {
           onMoveMarkerStroke={handleMoveMarkerStroke}
           onUpdateMarkerPoint={handleUpdateMarkerPoint}
           onDeselectAll={handleCloseSidebar}
-          onAddMultiplePins={handleAddMultiplePins}
-          osmTrigger={osmTrigger}
-          onOsmLoadingChange={setIsImportingOsm}
           selectedGroup={selectedGroup}
           onSelectGroup={handleSelectGroup}
           onClearGroupSelection={handleClearGroupSelection}

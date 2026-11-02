@@ -686,8 +686,3 @@ body, html, #root {
     transform: rotate(360deg);
   }
 }
-
-.osm-spin {
-  display: inline-block;
-  animation: spin 1s linear infinite;
-}

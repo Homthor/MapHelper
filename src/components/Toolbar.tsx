@@ -21,8 +21,6 @@ interface ToolbarProps {
   onOpenCityModal: () => void;
   activeTool: ActiveTool;
   onSelectTool: (tool: ActiveTool) => void;
-  onImportOsmSigns?: () => void;
-  isImportingOsm?: boolean;
   baseMap: BaseMapType;
   onSelectBaseMap: (base: BaseMapType) => void;
   studyMode: boolean;
@@ -40,8 +38,6 @@ export const Toolbar: React.FC<ToolbarProps> = ({
   onOpenCityModal,
   activeTool,
   onSelectTool,
-  onImportOsmSigns,
-  isImportingOsm,
   baseMap,
   onSelectBaseMap,
   studyMode,
@@ -124,27 +120,6 @@ export const Toolbar: React.FC<ToolbarProps> = ({
           <MapPin size={16} />
           <span>+ Метка</span>
         </button>
-
-        {onImportOsmSigns && (
-          <button
-            onClick={onImportOsmSigns}
-            disabled={isImportingOsm}
-            className={`btn btn-tool ${isImportingOsm ? 'active' : ''}`}
-            title="Автоматически загрузить дорожные знаки (уступи дорогу, стоп, светофоры, камеры) из OpenStreetMap в видимой области перекрёстка"
-          >
-            {isImportingOsm ? (
-              <>
-                <span className="osm-spin">⏳</span>
-                <span>Загрузка знаков...</span>
-              </>
-            ) : (
-              <>
-                <Download size={15} />
-                <span>Знаки OSM</span>
-              </>
-            )}
-          </button>
-        )}
 
         <button
           onClick={() => onSelectTool('panorama')}
